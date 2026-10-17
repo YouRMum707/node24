@@ -1,14 +1,23 @@
-name: packaging
-
+name: Packaging & Node24.js
 on:
+schedule:
+- cron: '30 10 * * *'
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
   schedule:
-    - cron: '30 10 * * *'
+    - cron: '0 8 * * 4'
   workflow_dispatch:
     inputs:
       publish:
         description: Publish .debs to APT droplet after smoke test
         type: boolean
         default: true
+      arches:
+        description: Architectures to build (JSON array)
+        type: string
+        default: '["amd64","arm64"]'
 
 concurrency:
   group: packaging-${{ github.repository }}
@@ -19,9 +28,40 @@ permissions:
   packages: read
 
 jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node-version: [24.x]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+
+    - name: Configure
+      run: ./configure
+
+    - name: Install dependencies
+      run: make
+
+    - name: Run check
+      run: make check
+
+    - name: Run distcheck
+      run: make distcheck
+
   pipeline:
+    needs: build
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
     uses: Dockershelf/node-pipeline/.github/workflows/update-meta-gbp.yml@main
     with:
-      dists-json: '["trixie", "unstable"]'
+      dists-json: '["trixie","unstable"]'
+      arches-json: ${{ github.event_name == 'workflow_dispatch' && inputs.arches || '["amd64","arm64"]' }}
       publish: ${{ github.event_name == 'workflow_dispatch' && inputs.publish || github.event_name == 'schedule' }}
     secrets: inherit
